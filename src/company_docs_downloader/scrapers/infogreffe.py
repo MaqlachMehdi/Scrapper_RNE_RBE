@@ -20,26 +20,6 @@ class InfogreffeClient(BaseScraper):
         super().__init__(browser=browser, timeout_ms=timeout_ms)
         self.allow_manual_login = allow_manual_login
 
-    def download_latest_statutes(
-        self,
-        query: CompanyQuery,
-        credentials: Credentials,
-        output_dir: Path,
-        company: CompanyIdentity,
-    ) -> DownloadResult:
-        context = self.browser.new_context(accept_downloads=True)
-        page = context.new_page()
-        try:
-            self._login(page, credentials)
-            self._open_company_page(page, query, company)
-            self._open_documents_tab(page)
-            document_link = self._find_statutes_link(page)
-            destination = output_dir / sanitize_filename(f"{company.name}-statuts-infogreffe-{company.siren or query.value}.pdf")
-            file_path = self._download_from_locator(page, document_link, destination)
-            return DownloadResult(document_type=DocumentType.STATUTES, source="infogreffe", file_path=file_path)
-        finally:
-            context.close()
-
     def download_rbe(
         self,
         query: CompanyQuery,
@@ -50,42 +30,33 @@ class InfogreffeClient(BaseScraper):
         context = self.browser.new_context(accept_downloads=True)
         page = context.new_page()
         try:
-            self._login(page, credentials)
-            self._open_company_page(page, query, company)
-            self._open_beneficial_owners_tab(page)
+            authenticated_page = self._login(page, credentials)
+            self._open_company_page(authenticated_page, query, company)
+            self._open_beneficial_owners_tab(authenticated_page)
             destination = output_dir / sanitize_filename(f"{company.name}-rbe-{company.siren or query.value}.pdf")
-            file_path = self._download_rbe_document(page, destination)
+            file_path = self._download_rbe_document(authenticated_page, destination)
             return DownloadResult(document_type=DocumentType.RBE, source="infogreffe", file_path=file_path)
         finally:
             context.close()
 
-    def _login(self, page: Page, credentials: Credentials) -> None:
+    def _login(self, page: Page, credentials: Credentials) -> Page:
         self._goto(page, self.HOME_URL)
         self._maybe_accept_cookies(page)
 
         if self._is_cloudflare_block(page):
             if self._try_manual_login(page, "Infogreffe a bloque la navigation automatisee via Cloudflare."):
-                return
+                return page
             raise AuthenticationError("Infogreffe a bloque la navigation automatisee via Cloudflare.")
 
         try:
-            login_trigger = self._find_visible_locator(
-                page,
-                [
-                    lambda scope: scope.get_by_role("link", name=re.compile(r"(connexion|se connecter)", re.I)),
-                    lambda scope: scope.get_by_role("button", name=re.compile(r"(connexion|se connecter)", re.I)),
-                    lambda scope: scope.get_by_text(re.compile(r"(connexion|se connecter)", re.I)),
-                ],
-                "acces connexion Infogreffe",
-            )
-            login_trigger.click(timeout=self.timeout_ms)
-            self._wait_for_auth_page(page)
-            self._wait_for_hydrated_auth_form(page)
+            auth_page = self._open_login_window(page)
+            self._wait_for_auth_page(auth_page)
+            self._wait_for_hydrated_auth_form(auth_page)
 
-            if self._is_cloudflare_block(page):
+            if self._is_cloudflare_block(auth_page):
                 raise AuthenticationError("Infogreffe a presente une page de blocage Cloudflare pendant l'authentification.")
 
-            username_input, password_input, submit_button = self._locate_login_form(page)
+            username_input, password_input, submit_button = self._locate_login_form(auth_page)
             self._fill_input(username_input, credentials.username)
             self._fill_input(password_input, credentials.password)
             try:
@@ -93,29 +64,76 @@ class InfogreffeClient(BaseScraper):
             except Exception:
                 pass
             submit_button.click(timeout=self.timeout_ms)
-            self._wait_for_login_result(page)
-            self._handle_post_login_pages(page)
+            self._wait_for_login_result(auth_page)
+            self._handle_post_login_pages(auth_page)
+            return auth_page
         except AuthenticationError as exc:
             if self._try_manual_login(page, str(exc)):
-                return
+                return page
             raise
 
+    def _open_login_window(self, page: Page) -> Page:
+        login_trigger = self._find_visible_locator(
+            page,
+            [
+                lambda scope: scope.get_by_role("link", name=re.compile(r"(connexion|se connecter)", re.I)),
+                lambda scope: scope.get_by_role("button", name=re.compile(r"(connexion|se connecter)", re.I)),
+                lambda scope: scope.get_by_text(re.compile(r"(connexion|se connecter)", re.I)),
+            ],
+            "acces connexion Infogreffe",
+        )
+
+        existing_pages = list(page.context.pages)
+        login_trigger.click(timeout=self.timeout_ms)
+
+        deadline = time.monotonic() + min(5, self.timeout_ms / 1000)
+        while time.monotonic() < deadline:
+            for candidate in page.context.pages:
+                if candidate not in existing_pages:
+                    try:
+                        candidate.wait_for_load_state("domcontentloaded", timeout=1_500)
+                    except PlaywrightTimeoutError:
+                        pass
+                    return candidate
+
+            if self._is_auth_page_url(page.url):
+                return page
+
+            page.wait_for_timeout(200)
+
+        return page
+
     def _wait_for_auth_page(self, page: Page) -> None:
-        try:
-            page.wait_for_url(re.compile(r"api\.infogreffe\.fr/.*/openid-connect/auth", re.I), timeout=self.timeout_ms)
-            return
-        except PlaywrightTimeoutError:
-            pass
+        deadline = time.monotonic() + (self.timeout_ms / 1000)
+        while time.monotonic() < deadline:
+            if self._is_auth_page_url(page.url):
+                return
 
-        try:
-            page.wait_for_url(re.compile(r"api\.infogreffe\.fr/.*/login-actions/.*", re.I), timeout=3_000)
-            return
-        except PlaywrightTimeoutError:
-            pass
+            page_shell = self._find_visible_locator_in_scopes(
+                page,
+                [
+                    lambda scope: scope.locator(".login-container, .login_form-container, form.login_form"),
+                    lambda scope: scope.get_by_role("heading", name=re.compile(r"Connectez-vous avec vos identifiants", re.I)),
+                    lambda scope: scope.get_by_text(re.compile(r"Connectez-vous avec vos identifiants|M[ée]moriser les identifiants|Mot de passe oubli[ée]", re.I)),
+                    lambda scope: scope.locator("#kc-login"),
+                ],
+            )
+            if page_shell is not None:
+                return
 
-        form_probe = self._find_visible_locator_in_scopes(page, self._username_locator_builders())
-        if form_probe is None:
+            page.wait_for_timeout(250)
+
+        if not self._is_auth_page_url(page.url):
             raise AuthenticationError("La page d'authentification Infogreffe n'a pas ete ouverte apres le clic sur connexion.")
+
+    def _is_auth_page_url(self, url: str) -> bool:
+        return bool(
+            re.search(
+                r"https://(?:www\.)?api\.infogreffe\.fr/apollon/keycloak/realms/infogreffe/(?:protocol/openid-connect/auth|login-actions/[^?#]+)",
+                url,
+                re.I,
+            )
+        )
 
     def _wait_for_hydrated_auth_form(self, page: Page) -> None:
         try:
@@ -248,22 +266,28 @@ class InfogreffeClient(BaseScraper):
                 return
             raise
 
-    def _open_documents_tab(self, page: Page) -> None:
-        documents_tab = self._wait_for_any(
-            [
-                page.get_by_role("tab", name=re.compile(r"Documents", re.I)),
-                page.get_by_role("link", name=re.compile(r"Documents", re.I)),
-                page.get_by_text(re.compile(r"Documents", re.I)),
-            ],
-            "onglet Documents Infogreffe",
-        )
-        documents_tab.click(timeout=self.timeout_ms)
-
     def _open_beneficial_owners_tab(self, page: Page) -> None:
         initial_target = self._find_existing_rbe_target(page)
         if initial_target is not None:
             self._align_target_in_view(page, initial_target)
             return
+
+        tab_target = self._find_visible_locator_in_scopes(
+            page,
+            [
+                lambda scope: scope.get_by_role("tab", name=re.compile(r"B[ée]n[ée]ficiaires? effectifs?", re.I)),
+                lambda scope: scope.get_by_role("link", name=re.compile(r"B[ée]n[ée]ficiaires? effectifs?", re.I)),
+                lambda scope: scope.get_by_text(re.compile(r"B[ée]n[ée]ficiaires? effectifs?", re.I)),
+            ],
+        )
+        if tab_target is not None:
+            self._click_tab_target(tab_target)
+            page.wait_for_timeout(400)
+
+            target = self._find_existing_rbe_target(page)
+            if target is not None:
+                self._align_target_in_view(page, target)
+                return
 
         deadline = time.monotonic() + (self.timeout_ms / 1000)
         while time.monotonic() < deadline:
@@ -467,26 +491,6 @@ class InfogreffeClient(BaseScraper):
             pass
 
         page.wait_for_timeout(200)
-
-    def _find_statutes_link(self, page: Page):
-        patterns = [
-            r"Copie des statuts",
-            r"Statuts mis a jour",
-            r"statuts",
-        ]
-        for pattern in patterns:
-            rows = page.locator("div, li, tr").filter(has_text=re.compile(pattern, re.I))
-            row_count = min(rows.count(), 8)
-            for index in range(row_count):
-                row = rows.nth(index)
-                links = row.locator("a[href]")
-                if links.count() > 0:
-                    return links.last
-                buttons = row.get_by_role("button")
-                if buttons.count() > 0:
-                    return buttons.last
-
-        raise DocumentNotFoundError("Aucun document de statuts n'a ete trouve sur Infogreffe.")
 
     def _wait_for_company_profile_page(self, page: Page) -> None:
         deadline = time.monotonic() + (self.timeout_ms / 1000)

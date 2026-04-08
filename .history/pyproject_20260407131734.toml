@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "company-docs-downloader"
+version = "0.1.0"
+description = "CLI modulaire pour telecharger des documents d'entreprise depuis Pappers et Infogreffe."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "keyring>=25.6.0",
+    "playwright>=1.52.0",
+    "questionary>=2.1.0",
+]
+
+[project.scripts]
+company-docs-downloader = "company_docs_downloader.cli:main"
+company-docs-configure-infogreffe = "company_docs_downloader.credential_cli:configure_main"
+company-docs-clear-infogreffe = "company_docs_downloader.credential_cli:clear_main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

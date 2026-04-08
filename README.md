@@ -3,7 +3,6 @@
 CLI Python modulaire pour rechercher une entreprise via son nom ou son numero de SIREN, puis telecharger :
 
 - l'extrait INPI / RNE depuis Pappers
-- les statuts ou le document juridique le plus pertinent, d'abord depuis Pappers puis via Infogreffe en repli si necessaire
 - le RBE / document des beneficiaires effectifs via Infogreffe
 
 ## Points clefs
@@ -34,6 +33,8 @@ python -m company_docs_downloader.credential_cli configure
 
 Ensuite, la CLI les reutilisera automatiquement pour le RBE et pourra les proposer pour le repli statuts sans jamais les stocker dans le depot Git.
 
+Ensuite, la CLI les reutilisera automatiquement pour le RBE sans jamais les stocker dans le depot Git.
+
 Pour les supprimer :
 
 ```bash
@@ -56,7 +57,6 @@ company-docs-downloader
 
 - Le parcours HTML de Pappers et d'Infogreffe peut evoluer. Les selecteurs ont ete centralises et le code est structure pour etre adaptee rapidement.
 - Certains documents sur Infogreffe peuvent requerir un compte, une authentification valide ou un paiement selon le type de document.
-- Le telechargement des statuts tente d'abord Pappers, puis Infogreffe si des identifiants ont ete fournis.
 - Le telechargement du RBE passe directement par Infogreffe et demande donc des identifiants valides.
 - Les identifiants Infogreffe peuvent etre lus depuis le gestionnaire d'identifiants Windows plutot que demandes a chaque execution.
 - Si Infogreffe bloque l'automatisation via Cloudflare, la CLI bascule sur une reprise manuelle: vous vous connectez dans la fenetre navigateur ouverte, puis l'automatisation continue.

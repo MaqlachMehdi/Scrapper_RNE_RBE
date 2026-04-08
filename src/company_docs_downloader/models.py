@@ -7,7 +7,6 @@ from pathlib import Path
 
 class DocumentType(str, Enum):
     RNE = "rne"
-    STATUTES = "statutes"
     RBE = "rbe"
 
 

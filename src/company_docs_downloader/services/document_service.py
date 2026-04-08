@@ -3,7 +3,7 @@ from __future__ import annotations
 from playwright.sync_api import sync_playwright
 
 from company_docs_downloader.config import AppConfig
-from company_docs_downloader.exceptions import DocumentNotFoundError, ValidationError
+from company_docs_downloader.exceptions import ValidationError
 from company_docs_downloader.models import CompanyIdentity, DownloadResult, UserRequest
 from company_docs_downloader.models import DocumentType
 from company_docs_downloader.scrapers.infogreffe import InfogreffeClient
@@ -27,41 +27,12 @@ class DocumentDownloadService:
                 if DocumentType.RNE in user_request.selected_documents:
                     results.append(pappers.download_rne_extract(user_request.company_query, output_dir, company))
 
-                if DocumentType.STATUTES in user_request.selected_documents:
-                    results.append(self._download_statutes(user_request, company, output_dir, pappers, browser))
-
                 if DocumentType.RBE in user_request.selected_documents:
                     results.append(self._download_rbe(user_request, company, output_dir, browser))
 
                 return company, results
             finally:
                 browser.close()
-
-    def _download_statutes(
-        self,
-        user_request: UserRequest,
-        company: CompanyIdentity,
-        output_dir,
-        pappers: PappersClient,
-        browser,
-    ) -> DownloadResult:
-        try:
-            return pappers.download_latest_statutes(user_request.company_query, output_dir, company)
-        except DocumentNotFoundError:
-            if user_request.infogreffe_credentials is None:
-                raise
-
-        infogreffe = InfogreffeClient(
-            browser=browser,
-            timeout_ms=self.config.timeout_ms,
-            allow_manual_login=self.config.allow_manual_infogreffe_login,
-        )
-        return infogreffe.download_latest_statutes(
-            user_request.company_query,
-            user_request.infogreffe_credentials,
-            output_dir,
-            company,
-        )
 
     def _download_rbe(self, user_request: UserRequest, company: CompanyIdentity, output_dir, browser) -> DownloadResult:
         if user_request.infogreffe_credentials is None:

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from playwright.sync_api import Browser, Page, TimeoutError as PlaywrightTimeoutError
 
-from company_docs_downloader.exceptions import DocumentNotFoundError, ScraperError
+from company_docs_downloader.exceptions import ScraperError
 from company_docs_downloader.models import CompanyIdentity, CompanyQuery, DocumentType, DownloadResult
 from company_docs_downloader.scrapers.base import BaseScraper
 from company_docs_downloader.utils.files import sanitize_filename
@@ -48,20 +48,6 @@ class PappersClient(BaseScraper):
         finally:
             context.close()
 
-    def download_latest_statutes(self, query: CompanyQuery, output_dir: Path, company: CompanyIdentity) -> DownloadResult:
-        context = self.browser.new_context(accept_downloads=True)
-        page = context.new_page()
-        try:
-            self._open_company_page(page, query)
-            self._maybe_accept_cookies(page)
-            self._focus_legal_documents_section(page)
-            document_link = self._find_statutes_link(page)
-            destination = output_dir / sanitize_filename(f"{company.name}-statuts-{company.siren or query.value}.pdf")
-            file_path = self._download_from_locator(page, document_link, destination)
-            return DownloadResult(document_type=DocumentType.STATUTES, source="pappers", file_path=file_path)
-        finally:
-            context.close()
-
     def _open_company_page(self, page: Page, query: CompanyQuery) -> None:
         self._goto(page, self.SEARCH_URL.format(query=self._quote_query(query.value)))
         self._maybe_accept_cookies(page)
@@ -94,34 +80,3 @@ class PappersClient(BaseScraper):
         if not match:
             return None
         return re.sub(r"\s+", "", match.group(1))
-
-    def _focus_legal_documents_section(self, page: Page) -> None:
-        section_title = self._wait_for_any(
-            [
-                page.get_by_text(re.compile(r"Documents juridiques", re.I)),
-                page.get_by_role("heading", name=re.compile(r"Documents juridiques", re.I)),
-            ],
-            "section Documents juridiques",
-        )
-        section_title.scroll_into_view_if_needed(timeout=self.timeout_ms)
-
-    def _find_statutes_link(self, page: Page):
-        patterns = [
-            r"Copie des statuts mis a jour",
-            r"Statuts mis a jour",
-            r"statuts",
-        ]
-
-        for pattern in patterns:
-            rows = page.locator("div, li, tr").filter(has_text=re.compile(pattern, re.I))
-            row_count = min(rows.count(), 8)
-            for index in range(row_count):
-                row = rows.nth(index)
-                links = row.locator("a[href]")
-                if links.count() > 0:
-                    return links.last
-                buttons = row.get_by_role("button")
-                if buttons.count() > 0:
-                    return buttons.last
-
-        raise DocumentNotFoundError("Aucun document de statuts n'a ete trouve sur Pappers.")

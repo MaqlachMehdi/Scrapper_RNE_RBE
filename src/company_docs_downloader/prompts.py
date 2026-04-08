@@ -22,25 +22,8 @@ def prompt_user_request(config: AppConfig) -> UserRequest:
     infogreffe_credentials = None
     stored_credentials = load_infogreffe_credentials()
 
-    requires_infogreffe = DocumentType.RBE in selected_documents
-
-    if requires_infogreffe:
+    if DocumentType.RBE in selected_documents:
         infogreffe_credentials = stored_credentials or _ask_infogreffe_credentials(allow_save=True)
-    elif DocumentType.STATUTES in selected_documents:
-        if stored_credentials is not None:
-            wants_infogreffe = questionary.confirm(
-                "Utiliser les identifiants Infogreffe enregistres comme source de repli pour les statuts ?",
-                default=True,
-            ).ask()
-            if wants_infogreffe:
-                infogreffe_credentials = stored_credentials
-        else:
-            wants_infogreffe = questionary.confirm(
-                "Voulez-vous activer la connexion Infogreffe comme source de repli pour les statuts ?",
-                default=True,
-            ).ask()
-            if wants_infogreffe:
-                infogreffe_credentials = _ask_infogreffe_credentials(allow_save=True)
 
     return UserRequest(
         selected_documents=selected_documents,
@@ -55,7 +38,6 @@ def _ask_documents() -> list[DocumentType]:
         "Quels documents voulez-vous telecharger ?",
         choices=[
             questionary.Choice("Extrait INPI / RNE", value=DocumentType.RNE),
-            questionary.Choice("Statuts / document juridique pertinent", value=DocumentType.STATUTES),
             questionary.Choice("RBE / beneficiaires effectifs (Infogreffe)", value=DocumentType.RBE),
         ],
         validate=lambda value: True if value else "Selectionnez au moins un document.",

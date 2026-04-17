@@ -11,6 +11,7 @@ from company_docs_downloader.exceptions import AuthenticationError, DocumentNotF
 from company_docs_downloader.models import CompanyIdentity, CompanyQuery, Credentials, DocumentType, DownloadResult
 from company_docs_downloader.scrapers.base import BaseScraper
 from company_docs_downloader.utils.files import sanitize_filename
+from company_docs_downloader.utils.session import clear_session_state, load_session_path, save_session_state, session_exists
 
 
 class InfogreffeClient(BaseScraper):
@@ -26,11 +27,21 @@ class InfogreffeClient(BaseScraper):
         credentials: Credentials,
         output_dir: Path,
         company: CompanyIdentity,
+        force_login: bool = False,
     ) -> DownloadResult:
-        context = self.browser.new_context(accept_downloads=True)
+        if force_login:
+            # Login frais : pas de session, on repart de zéro
+            context = self.browser.new_context(accept_downloads=True)
+        else:
+            session_path = load_session_path()
+            context_kwargs: dict = {"accept_downloads": True}
+            if session_path is not None:
+                context_kwargs["storage_state"] = str(session_path)
+            context = self.browser.new_context(**context_kwargs)
+
         page = context.new_page()
         try:
-            authenticated_page = self._login(page, credentials)
+            authenticated_page = self._login_with_session(page, credentials, has_session=not force_login and load_session_path() is not None)
             self._open_company_page(authenticated_page, query, company)
             self._open_beneficial_owners_tab(authenticated_page)
             destination = output_dir / sanitize_filename(f"{company.name}-rbe-{company.siren or query.value}.pdf")
@@ -38,6 +49,39 @@ class InfogreffeClient(BaseScraper):
             return DownloadResult(document_type=DocumentType.RBE, source="infogreffe", file_path=file_path)
         finally:
             context.close()
+
+    def _login_with_session(self, page: Page, credentials: Credentials, has_session: bool) -> Page:
+        """Tente de réutiliser la session existante, sinon effectue un login complet."""
+        if has_session:
+            self._goto(page, self.HOME_URL)
+            self._maybe_accept_cookies(page)
+            page.wait_for_timeout(2_000)
+            if self._is_logged_in_strict(page):
+                return page
+            # Session expirée : on la supprime et on retombe sur le login normal
+            clear_session_state()
+
+        self._login(page, credentials)
+        # Sauvegarde de la session après connexion réussie
+        try:
+            storage = page.context.storage_state()
+            save_session_state(storage)
+        except Exception:
+            pass  # La sauvegarde de session est non-bloquante
+        # Toujours retourner la page principale (pas le popup Keycloak qui peut être fermé)
+        self._goto(page, self.HOME_URL)
+        return page
+
+    def _is_logged_in_strict(self, page: Page) -> bool:
+        """Vérifie la connexion avec des indicateurs forts uniquement (pas l'URL seule)."""
+        if self._is_account_selection_page(page):
+            return True
+        success_builders = [
+            lambda scope: scope.get_by_role("link", name=re.compile(r"(deconnexion|se deconnecter|mon compte|mon profil)", re.I)),
+            lambda scope: scope.get_by_role("button", name=re.compile(r"(deconnexion|se deconnecter|mon compte|mon profil)", re.I)),
+            lambda scope: scope.get_by_text(re.compile(r"(deconnexion|se deconnecter|mon compte|mon profil)", re.I)),
+        ]
+        return self._find_visible_locator_in_scopes(page, success_builders) is not None
 
     def _login(self, page: Page, credentials: Credentials) -> Page:
         self._goto(page, self.HOME_URL)

@@ -42,6 +42,13 @@ class UserRequest:
 
 
 @dataclass(slots=True)
+class BatchRequest:
+    selected_documents: list[DocumentType]
+    output_dir: Path
+    infogreffe_credentials: Credentials | None = None
+
+
+@dataclass(slots=True)
 class DownloadResult:
     document_type: DocumentType
     source: str

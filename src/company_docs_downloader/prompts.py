@@ -7,7 +7,7 @@ import questionary
 
 from company_docs_downloader.config import AppConfig
 from company_docs_downloader.exceptions import ValidationError
-from company_docs_downloader.models import CompanyQuery, Credentials, DocumentType, SearchMode, UserRequest
+from company_docs_downloader.models import BatchRequest, CompanyQuery, Credentials, DocumentType, SearchMode, UserRequest
 from company_docs_downloader.utils.credentials import load_infogreffe_credentials, save_infogreffe_credentials
 
 
@@ -119,3 +119,45 @@ def _ask_infogreffe_credentials(*, allow_save: bool) -> Credentials:
             save_infogreffe_credentials(credentials)
 
     return credentials
+
+
+def prompt_mode(download_root: Path) -> tuple[str, Path | None]:
+    """Demande à l'utilisateur le mode d'exécution : simple ou batch."""
+    mode = questionary.select(
+        "Mode d'execution :",
+        choices=[
+            questionary.Choice("Entreprise unique (nom ou SIREN)", value="single"),
+            questionary.Choice("Traitement par lot (fichier .txt)", value="batch"),
+        ],
+    ).ask()
+
+    if mode is None:
+        raise ValidationError("Mode non selectionne.")
+
+    if mode == "batch":
+        raw = questionary.text(
+            "Chemin du fichier entreprises.txt :",
+            default=str(download_root.parent / "entreprises.txt"),
+            validate=lambda text: True if (text or "").strip() else "Le chemin est obligatoire.",
+        ).ask()
+        if raw is None:
+            raise ValidationError("Chemin du fichier manquant.")
+        return "batch", Path(raw).expanduser().resolve()
+
+    return "single", None
+
+
+def prompt_batch_request(config: AppConfig) -> BatchRequest:
+    """Pose les questions communes pour un traitement par lot."""
+    selected_documents = _ask_documents()
+    output_dir = _ask_output_dir(config.download_root)
+    infogreffe_credentials = None
+    if DocumentType.RBE in selected_documents:
+        stored = load_infogreffe_credentials()
+        infogreffe_credentials = stored or _ask_infogreffe_credentials(allow_save=True)
+
+    return BatchRequest(
+        selected_documents=selected_documents,
+        output_dir=output_dir,
+        infogreffe_credentials=infogreffe_credentials,
+    )

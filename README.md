@@ -1,18 +1,26 @@
 # Company Docs Downloader
 
-CLI Python modulaire pour rechercher une entreprise via son nom ou son numero de SIREN, puis telecharger :
+CLI Python modulaire pour rechercher des entreprises (nom ou SIREN) et telecharger automatiquement :
 
 - l'extrait INPI / RNE depuis Pappers
-- le RBE / document des beneficiaires effectifs via Infogreffe
+- le RBE (beneficiaires effectifs) depuis Infogreffe
 
-## Points clefs
+Le projet fonctionne en mode entreprise unique ou traitement batch, avec un flux autonome de bout en bout.
 
-- interface interactive avec `questionary`
-- architecture separee entre `prompts`, `services`, `scrapers` et `utils`
-- telechargement des PDF sur le poste local dans un dossier dedie
-- identifiants Infogreffe saisis au lancement, jamais hardcodes
-- passage obligatoire par Infogreffe pour le RBE
-- identifiants Infogreffe enregistrables localement dans le gestionnaire d'identifiants Windows
+## Nouveautes
+
+- traitement batch natif via un fichier `entreprises.txt`
+- execution autonome des deux scrapers (Pappers + Infogreffe)
+- cache securise des identifiants Infogreffe (gestionnaire d'identifiants Windows)
+- sauvegarde/reutilisation de la session navigateur Infogreffe pour eviter les reconnexions inutiles
+- journal de traitement batch genere automatiquement
+
+## Architecture
+
+- `prompts`: interaction CLI et validation des saisies
+- `services`: orchestration des traitements (single + batch)
+- `scrapers`: logique d'automatisation Pappers / Infogreffe
+- `utils`: fichiers, logs, session, identifiants securises
 
 ## Installation
 
@@ -23,25 +31,37 @@ pip install -e .
 playwright install chromium
 ```
 
-## Memoriser les identifiants Infogreffe
+## Configuration des identifiants Infogreffe
 
-Pour eviter de ressaisir l'identifiant et le mot de passe a chaque lancement, vous pouvez les enregistrer une seule fois dans le gestionnaire d'identifiants Windows :
+Enregistrement securise (une seule fois) :
 
 ```bash
 python -m company_docs_downloader.credential_cli configure
 ```
 
-Ensuite, la CLI les reutilisera automatiquement pour le RBE et pourra les proposer pour le repli statuts sans jamais les stocker dans le depot Git.
+ou via script installe :
 
-Ensuite, la CLI les reutilisera automatiquement pour le RBE sans jamais les stocker dans le depot Git.
+```bash
+company-docs-configure-infogreffe
+```
 
-Pour les supprimer :
+Suppression des identifiants :
 
 ```bash
 python -m company_docs_downloader.credential_cli clear
 ```
 
-## Execution
+ou via script installe :
+
+```bash
+company-docs-clear-infogreffe
+```
+
+Les identifiants ne sont pas stockes dans le code ni dans le depot Git.
+
+## Utilisation
+
+Lancer la CLI :
 
 ```bash
 python -m company_docs_downloader
@@ -53,21 +73,39 @@ ou :
 company-docs-downloader
 ```
 
-## Remarques
+Au demarrage, choisissez :
 
-- Le parcours HTML de Pappers et d'Infogreffe peut evoluer. Les selecteurs ont ete centralises et le code est structure pour etre adaptee rapidement.
-- Certains documents sur Infogreffe peuvent requerir un compte, une authentification valide ou un paiement selon le type de document.
-- Le telechargement du RBE passe directement par Infogreffe et demande donc des identifiants valides.
-- Les identifiants Infogreffe peuvent etre lus depuis le gestionnaire d'identifiants Windows plutot que demandes a chaque execution.
-- Si Infogreffe bloque l'automatisation via Cloudflare, la CLI bascule sur une reprise manuelle: vous vous connectez dans la fenetre navigateur ouverte, puis l'automatisation continue.
-- Autre solution possible, une seul authentification et on conserve. La solution de session navigateur persistée consiste à ne plus refaire la connexion Infogreffe à chaque exécution, mais à réutiliser une session déjà ouverte et déjà authentifiée. L’idée n’est pas de contourner une protection, mais de conserver un état de connexion valide, exactement comme quand tu fermes puis rouvres un navigateur en gardant tes cookies.
+- `Entreprise unique` pour un traitement ponctuel
+- `Traitement par lot` pour traiter une liste d'entreprises
 
-**Principe**
-Quand tu te connectes manuellement à un site, le navigateur stocke plusieurs éléments de session :
-- cookies d’authentification
-- stockage local du site
-- parfois des jetons de session temporaires
-- parfois un état lié au profil navigateur lui-même
+## Format du fichier batch
 
-Si ces éléments sont conservés, un script peut rouvrir le navigateur avec ce même état et retrouver une session déjà connectée, sans retaper l’identifiant et le mot de passe. 
-Utile pour envoyé un max de requêtes à la suite ( récupérer tous les documents d'une liste d'entreprise )
+Le mode batch lit un fichier texte (par defaut `entreprises.txt`) :
+
+- une entreprise par ligne
+- accepte nom d'entreprise ou SIREN (9 chiffres)
+- lignes vides ignorees
+- lignes commencant par `#` ignorees (commentaires)
+
+Exemple :
+
+```txt
+# Noms
+SCI LOOTON
+SOFRADOM
+
+# SIREN
+534194535
+424950459
+```
+
+## Sorties
+
+- PDFs ranges par entreprise dans le dossier cible (par defaut `downloads/`)
+- fichier log de batch horodate dans le dossier de sortie
+- affichage de progression et statut de chaque entreprise (`OK` / `ERREUR`)
+
+## Notes
+
+- Le scraper depend de la structure HTML des sites cibles (Pappers, Infogreffe).
+- Certains documents Infogreffe peuvent rester soumis aux regles de compte, d'acces ou de facturation du site.
